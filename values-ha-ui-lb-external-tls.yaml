@@ -4,7 +4,9 @@
 #    https://www.vaultproject.io/docs/platform/k8s/helm/examples/standalone-tls
 #    https://www.vaultproject.io/docs/platform/k8s/helm/examples/ha-with-raft
 #    https://github.com/hashicorp/vault-helm/issues/243
-
+#
+#    helm template vault . -f values-ha-ui-lb-external-tls.yaml
+#
 global:
   enabled: true
   tlsDisable: false
@@ -20,10 +22,6 @@ server:
     limits:
       memory: 12Gi
       cpu: 1600m
-
-  #
-  annotations:
-    iam.amazonaws.com/role: telemetry/kwk-k8s-vault-kms-role
 
   #
   tolerations: |
