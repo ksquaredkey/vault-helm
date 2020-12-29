@@ -597,6 +597,11 @@ ui:
   serviceType: "ClusterIP"
   serviceNodePort: null
   externalPort: 8200
+  # Enable the following and change the targetPort if you want to use
+  # a different TLS cert for the UI from the cluster internal certs/CA
+  alternateListener: false
+  targetPort: 8200
+  externalTrafficPolicy: Local
 
   # loadBalancerSourceRanges:
   #   - 10.0.0.0/16

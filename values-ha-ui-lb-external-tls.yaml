@@ -1,0 +1,143 @@
+#
+#  Cobbled together from:
+#    https://learn.hashicorp.com/tutorials/vault/kubernetes-raft-deployment-guide?in=vault/kubernetes#configure-vault-helm-chart
+#    https://www.vaultproject.io/docs/platform/k8s/helm/examples/standalone-tls
+#    https://www.vaultproject.io/docs/platform/k8s/helm/examples/ha-with-raft
+#    https://github.com/hashicorp/vault-helm/issues/243
+
+global:
+  enabled: true
+  tlsDisable: false
+
+server:
+  # These Resource Limits are in line with node requirements in the
+  # Vault Reference Architecture for a Small Cluster
+  # We had to tweak down as the VRA m4.large did not allow for any overhead
+  resources:
+    requests:
+      memory: 6Gi
+      cpu: 1600m
+    limits:
+      memory: 12Gi
+      cpu: 1600m
+
+  #
+  annotations:
+    iam.amazonaws.com/role: telemetry/kwk-k8s-vault-kms-role
+
+  #
+  tolerations: |
+    - key: "dedicated"
+      operator: "Equal"
+      value: "vault-node"
+      effect: "NoSchedule"
+
+  # Affinities
+  affinity: |
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+          - matchExpressions:
+            - key: dedicated
+              operator: In
+              values:
+              - vault-node
+    podAntiAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        - labelSelector:
+            matchExpressions:
+              - key: affinity
+                operator: In
+                values:
+                - vault-node
+          topologyKey: kubernetes.io/hostname
+
+
+
+  # For HA configuration and because we need to manually init the vault,
+  # we need to define custom readiness/liveness Probe settings
+  readinessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true&sealedcode=204&uninitcode=204"
+  livenessProbe:
+    enabled: true
+    path: "/v1/sys/health?standbyok=true"
+    initialDelaySeconds: 60
+
+  # extraEnvironmentVars is a list of extra enviroment variables to set with the stateful set.
+  extraEnvironmentVars:
+    VAULT_CACERT: /vault/userconfig/tls-ca/ca.crt
+
+  # extraVolumes is a list of extra volumes to mount. These will be exposed
+  # to Vault in the path `/vault/userconfig/<name>/`.
+  extraVolumes:
+    - type: secret
+      name: tls-server
+    - type: secret
+      name: tls-ca
+    # The UI External TLS creds - like from LetsEncrypt
+    - type: secret
+      name: tls-external
+
+  ha:
+    enabled: true
+    replicas: 3  # the default
+    raft:
+      enabled: true
+      config: |
+        ui = true
+
+        listener "tcp" {
+          address = "[::]:8200"
+          cluster_address = "[::]:8201"
+          tls_cert_file = "/vault/userconfig/tls-server/vault-wild.crt"
+          tls_key_file = "/vault/userconfig/tls-server/vault-wild.key"
+          tls_ca_cert_file = "/vault/userconfig/tls-ca/ca.crt"
+        }
+
+        # Used for LoadBalancer UI
+        listener "tcp" {
+          address = "[::]:8210"
+          tls_cert_file = "/vault/userconfig/tls-external/vault-external.crt"
+          tls_key_file = "/vault/userconfig/tls-external/vault-external.key"
+        }
+
+        storage "raft" {
+          path = "/vault/data"
+          retry_join {
+            leader_api_addr = "https://vault-0.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls-ca/ca.crt"
+            leader_client_cert_file = "/vault/userconfig/tls-server/vault-wild.crt"
+            leader_client_key_file = "/vault/userconfig/tls-server/vault-wild.key"
+          }
+          retry_join {
+            leader_api_addr = "https://vault-1.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls-ca/ca.crt"
+            leader_client_cert_file = "/vault/userconfig/tls-server/vault-wild.crt"
+            leader_client_key_file = "/vault/userconfig/tls-server/vault-wild.key"
+          }
+          retry_join {
+            leader_api_addr = "https://vault-2.vault-internal:8200"
+            leader_ca_cert_file = "/vault/userconfig/tls-ca/ca.crt"
+            leader_client_cert_file = "/vault/userconfig/tls-server/vault-wild.crt"
+            leader_client_key_file = "/vault/userconfig/tls-server/vault-wild.key"
+          }
+        }
+
+        service_registration "kubernetes" {}
+
+# Vault UI
+ui:
+  enabled: true
+  serviceType: "LoadBalancer"
+  serviceNodePort: null
+  externalPort: 8200
+  alternateListener: true
+  targetPort: 8210
+  externalTrafficPolicy: Local
+  annotations:
+    external-dns.alpha.kubernetes.io/hostname: vault.my.external-domain
+    service.beta.kubernetes.io/aws-load-balancer-internal: "true"
+    service.beta.kubernetes.io/aws-load-balancer-healthcheck-interval: "30"
+    service.beta.kubernetes.io/aws-load-balancer-backend-protocol: tcp
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"

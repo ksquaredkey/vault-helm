@@ -32,6 +32,11 @@ spec:
     - name: https-internal
       port: 8201
       targetPort: 8201
+    {{- if and (.Values.ui.enabled) (.Values.ui.alternateListener) }}
+    - name: https-external
+      port: {{ .Values.ui.targetPort }}
+      targetPort: {{ .Values.ui.targetPort }}
+    {{- end }}
   selector:
     app.kubernetes.io/name: {{ include "vault.name" . }}
     app.kubernetes.io/instance: {{ .Release.Name }}
